@@ -26,7 +26,10 @@ async function request(path, options = {}) {
       const fallback = rawText && !rawText.trim().startsWith("<!DOCTYPE")
         ? rawText.trim()
         : `${res.status} ${res.statusText}`;
-      throw new Error(data.message || fallback || "Request failed");
+      const err = new Error(data.message || fallback || "Request failed");
+      err.status = res.status;
+      err.data = data;
+      throw err;
     }
     
     return data;

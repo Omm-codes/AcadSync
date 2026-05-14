@@ -118,6 +118,7 @@ export default function RegisterPage() {
               response.message ||
               "Please verify your email before signing in. If you do not see the OTP, check Spam or Promotions.",
             email: response.email || form.email,
+            devOtp: response.devOtp || "",
           },
         });
         return;

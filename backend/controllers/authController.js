@@ -18,6 +18,7 @@ const logger = require('../utils/logger');
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 const PASSWORD_RESET_TTL_MINUTES = Number(process.env.PASSWORD_RESET_TTL_MINUTES || 15);
 const EMAIL_VERIFY_OTP_TTL_MINUTES = Number(process.env.EMAIL_VERIFY_OTP_TTL_MINUTES || 10);
+const isProduction = () => process.env.NODE_ENV === 'production';
 
 const normalizeEmail = (value) => String(value || '').trim().toLowerCase();
 const isEmailFormatValid = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
@@ -143,6 +144,31 @@ const sendVerificationOtpEmail = async (user, otpCode) => {
   }
 };
 
+const issueVerificationOtp = async (user) => {
+  const { otp, hashedOtp } = createVerificationOtpPair();
+  user.emailVerificationToken = hashedOtp;
+  user.emailVerificationExpires = new Date(Date.now() + EMAIL_VERIFY_OTP_TTL_MINUTES * 60 * 1000);
+  await user.save({ validateBeforeSave: false });
+  return otp;
+};
+
+const sendVerificationOtpWithFallback = async (user) => {
+  const otp = await issueVerificationOtp(user);
+
+  try {
+    await sendVerificationOtpEmail(user, otp);
+    return { otpSent: true, devOtp: null };
+  } catch (error) {
+    logger.warn(`Verification OTP email failed for ${user.email}: ${error.message}`);
+
+    if (isProduction()) {
+      throw error;
+    }
+
+    return { otpSent: false, devOtp: otp };
+  }
+};
+
 // Generate JWT token
 const generateToken = (id, role) => {
   return jwt.sign({ id, role }, process.env.JWT_SECRET, {
@@ -221,19 +247,22 @@ exports.registerUser = async (req, res, next) => {
     }
 
     if (isEmailVerificationEnabled()) {
-      const { otp, hashedOtp } = createVerificationOtpPair();
-      user.emailVerificationToken = hashedOtp;
-      user.emailVerificationExpires = new Date(Date.now() + EMAIL_VERIFY_OTP_TTL_MINUTES * 60 * 1000);
-      await user.save({ validateBeforeSave: false });
+      const otpResult = await sendVerificationOtpWithFallback(user);
+      logger.info(`Verification OTP prepared for new registration: ${user.email}; delivered=${otpResult.otpSent}`);
 
-      await sendVerificationOtpEmail(user, otp);
-      logger.info(`Verification OTP sent for new registration: ${user.email}`);
-
-      res.status(201).json({
-        message: 'Registration successful. Please verify your email using the OTP sent to your inbox.',
+      const response = {
+        message: otpResult.otpSent
+          ? 'Registration successful. Please verify your email using the OTP sent to your inbox.'
+          : 'Registration successful, but OTP email could not be delivered. Use the OTP shown in development mode or request a new OTP.',
         verificationRequired: true,
         email: user.email,
-      });
+      };
+
+      if (otpResult.devOtp) {
+        response.devOtp = otpResult.devOtp;
+      }
+
+      res.status(201).json(response);
       return;
     }
 
@@ -269,7 +298,21 @@ exports.loginUser = async (req, res, next) => {
     }
 
     if (user.provider === 'local' && isEmailVerificationEnabled() && !user.isEmailVerified) {
-      throw new AuthorizationError('Please verify your email before signing in.');
+      const otpResult = await sendVerificationOtpWithFallback(user);
+
+      const response = {
+        message: otpResult.otpSent
+          ? 'Please verify your email before signing in. A fresh OTP has been sent to your inbox.'
+          : 'Please verify your email before signing in. OTP email could not be delivered; use development OTP or request another OTP.',
+        verificationRequired: true,
+        email: user.email,
+      };
+
+      if (otpResult.devOtp) {
+        response.devOtp = otpResult.devOtp;
+      }
+
+      return res.status(403).json(response);
     }
 
     res.json(buildAuthPayload(user));
@@ -533,14 +576,19 @@ exports.requestEmailVerification = async (req, res, next) => {
       return res.status(200).json(safeMessage);
     }
 
-    const { otp, hashedOtp } = createVerificationOtpPair();
-    user.emailVerificationToken = hashedOtp;
-    user.emailVerificationExpires = new Date(Date.now() + EMAIL_VERIFY_OTP_TTL_MINUTES * 60 * 1000);
-    await user.save({ validateBeforeSave: false });
+    const otpResult = await sendVerificationOtpWithFallback(user);
 
-    await sendVerificationOtpEmail(user, otp);
+    const response = {
+      ...safeMessage,
+      verificationRequired: true,
+      email: user.email,
+    };
 
-    return res.status(200).json(safeMessage);
+    if (otpResult.devOtp) {
+      response.devOtp = otpResult.devOtp;
+    }
+
+    return res.status(200).json(response);
   } catch (error) {
     next(error);
   }

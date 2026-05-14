@@ -20,6 +20,7 @@ export default function VerifyEmailPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState(location.state?.message || "");
+  const [devOtp, setDevOtp] = useState(location.state?.devOtp || "");
 
   const navigateByRole = (role) => {
     const path = role === "admin" ? "/admin" : role === "organizer" ? "/organizer-dashboard" : "/dashboard";
@@ -84,6 +85,7 @@ export default function VerifyEmailPage() {
     try {
       const response = await apiRequestEmailVerification(email);
       setMessage(response.message || "If eligible, a verification email has been sent.");
+      setDevOtp(response.devOtp || "");
     } catch (err) {
       setError(err.message || "Unable to send verification email.");
     } finally {
@@ -102,6 +104,11 @@ export default function VerifyEmailPage() {
 
         {error && <div className="auth-error">{error}</div>}
         {message && <div className="auth-error" style={{ borderColor: "#93C5FD", color: "#1D4ED8", background: "#EFF6FF" }}>{message}</div>}
+        {devOtp && (
+          <div className="auth-error" style={{ borderColor: "#F59E0B", color: "#92400E", background: "#FFFBEB" }}>
+            Development OTP: <strong>{devOtp}</strong>
+          </div>
+        )}
         <div className="auth-error" style={{ borderColor: "#D1D5DB", color: "#374151", background: "#F9FAFB" }}>
           If the OTP does not arrive in 1-2 minutes, check your Spam or Promotions folder.
         </div>

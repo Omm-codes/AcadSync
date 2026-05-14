@@ -39,6 +39,17 @@ export default function LoginPage() {
       // Route based on newly verified database role
       navigateByRole(response.role);
     } catch (err) {
+      if (err?.data?.verificationRequired) {
+        navigate("/verify-email", {
+          state: {
+            message: err.message || "Please verify your email before signing in.",
+            email: err.data.email || form.email,
+            devOtp: err.data.devOtp || "",
+          },
+        });
+        return;
+      }
+
       if (err.message && err.message.toLowerCase().includes("verify")) {
         setError("Please verify your email before signing in. You can request a new verification link below.");
       } else {
